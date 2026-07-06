@@ -11,20 +11,25 @@ Setup:
     pip install bleak pycryptodome bleak-retry-connector
 
 Usage:
-    python scripts/ble_probe.py scan
-    python scripts/ble_probe.py pair AA:BB:CC:DD:EE:FF
-    python scripts/ble_probe.py on AA:BB:CC:DD:EE:FF
-    python scripts/ble_probe.py off AA:BB:CC:DD:EE:FF
-    python scripts/ble_probe.py color AA:BB:CC:DD:EE:FF 255 0 0
-    python scripts/ble_probe.py brightness AA:BB:CC:DD:EE:FF 50
-    python scripts/ble_probe.py laser AA:BB:CC:DD:EE:FF on
-    python scripts/ble_probe.py motor AA:BB:CC:DD:EE:FF off
-    python scripts/ble_probe.py raw AA:BB:CC:DD:EE:FF 0xf0 65,1,1
+    python scripts/ble_probe.py --scan
+    python scripts/ble_probe.py --address AA:BB:CC:DD:EE:FF --pair
+    python scripts/ble_probe.py --address AA:BB:CC:DD:EE:FF --power on
+    python scripts/ble_probe.py --address AA:BB:CC:DD:EE:FF --power off
+    python scripts/ble_probe.py --address AA:BB:CC:DD:EE:FF --color 255 0 0
+    python scripts/ble_probe.py --address AA:BB:CC:DD:EE:FF --brightness 50
+    python scripts/ble_probe.py --address AA:BB:CC:DD:EE:FF --laser on
+    python scripts/ble_probe.py --address AA:BB:CC:DD:EE:FF --motor off
+    python scripts/ble_probe.py --address AA:BB:CC:DD:EE:FF --command 0xf0 --data 65,1,1
+
+Flags combine into a single connection, e.g. turn on, set color, and
+disable the laser all at once:
+    python scripts/ble_probe.py --address AA:BB:CC:DD:EE:FF \\
+        --power on --color 255 0 0 --brightness 100 --laser off
 
 If a command has no visible effect, the opcode/payload/vendor_id are the
 first things to try changing -- pass --vendor-id/--mesh-name/--mesh-password
-to override the guessed defaults, and use 'raw' to experiment with opcodes
-that aren't wired up as named commands yet (e.g. laser or motor control).
+to override the guessed defaults, and use --command/--data to experiment
+with opcodes that aren't wired up as named flags yet.
 """
 
 from __future__ import annotations
@@ -73,7 +78,7 @@ MESH_SERVICE_UUID = _const.MESH_SERVICE_UUID
 TelinkMeshClient = _telink_mesh.TelinkMeshClient
 
 
-async def cmd_scan(_args: argparse.Namespace) -> None:
+async def _scan() -> None:
     print("Scanning for 10s... (make sure the projector is powered and in range)")
     devices = await BleakScanner.discover(timeout=10.0, return_adv=True)
     if not devices:
@@ -94,7 +99,7 @@ async def _connect(args: argparse.Namespace) -> TelinkMeshClient:
     if device is None:
         raise SystemExit(
             f"Could not find a BLE device at {args.address}. "
-            "Run 'scan' first and confirm it's in range."
+            "Run --scan first and confirm it's in range."
         )
     client = TelinkMeshClient(device, args.mesh_name, args.mesh_password, args.vendor_id)
     await client.async_connect()
@@ -105,124 +110,87 @@ async def _connect(args: argparse.Namespace) -> TelinkMeshClient:
     return client
 
 
-async def cmd_pair(args: argparse.Namespace) -> None:
+async def _run(args: argparse.Namespace) -> None:
+    if args.scan:
+        await _scan()
+        return
+
+    if not args.address:
+        raise SystemExit("--address is required (or use --scan to find it)")
+
     client = await _connect(args)
-    await client.stop()
+    try:
+        if args.power is not None:
+            if args.power == "on":
+                await client.async_turn_on()
+            else:
+                await client.async_turn_off()
+            print(f"Sent power-{args.power}. Did the projector respond?")
 
+        if args.color is not None:
+            red, green, blue = args.color
+            await client.async_set_rgb((red, green, blue))
+            print(f"Sent RGB({red}, {green}, {blue}). Did the color change correctly?")
 
-async def cmd_on(args: argparse.Namespace) -> None:
-    client = await _connect(args)
-    await client.async_turn_on()
-    print("Sent power-on. Did the projector turn on?")
-    await client.stop()
+        if args.brightness is not None:
+            await client.async_set_brightness(args.brightness)
+            print(f"Sent brightness {args.brightness}%. Did it dim correctly?")
 
+        if args.laser is not None:
+            await client.async_set_laser(args.laser == "on")
+            print(f"Sent laser {args.laser}. Did the laser respond correctly?")
 
-async def cmd_off(args: argparse.Namespace) -> None:
-    client = await _connect(args)
-    await client.async_turn_off()
-    print("Sent power-off. Did the projector turn off?")
-    await client.stop()
+        if args.motor is not None:
+            await client.async_set_motor(args.motor == "on")
+            print(f"Sent motor {args.motor}. Did the rotation respond correctly?")
 
-
-async def cmd_color(args: argparse.Namespace) -> None:
-    client = await _connect(args)
-    await client.async_set_rgb((args.red, args.green, args.blue))
-    print(f"Sent RGB({args.red}, {args.green}, {args.blue}). Did the color change correctly?")
-    await client.stop()
-
-
-async def cmd_brightness(args: argparse.Namespace) -> None:
-    client = await _connect(args)
-    await client.async_set_brightness(args.percent)
-    print(f"Sent brightness {args.percent}%. Did it dim correctly?")
-    await client.stop()
-
-
-async def cmd_laser(args: argparse.Namespace) -> None:
-    client = await _connect(args)
-    await client.async_set_laser(args.state == "on")
-    print(f"Sent laser {args.state}. Did the laser respond correctly?")
-    await client.stop()
-
-
-async def cmd_motor(args: argparse.Namespace) -> None:
-    client = await _connect(args)
-    await client.async_set_motor(args.state == "on")
-    print(f"Sent motor {args.state}. Did the rotation respond correctly?")
-    await client.stop()
-
-
-async def cmd_raw(args: argparse.Namespace) -> None:
-    client = await _connect(args)
-    data = bytes(int(b, 0) for b in args.data.split(",")) if args.data else b""
-    await client.async_send_raw(args.command, data)
-    print(f"Sent raw command 0x{args.command:02x} data={data.hex()}. Observe the projector.")
-    await client.stop()
-
-
-def _add_common_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("address", help="BLE MAC address, e.g. AA:BB:CC:DD:EE:FF")
-    parser.add_argument("--mesh-name", default=DEFAULT_MESH_NAME)
-    parser.add_argument("--mesh-password", default=DEFAULT_MESH_PASSWORD)
-    parser.add_argument(
-        "--vendor-id", type=lambda s: int(s, 0), default=DEFAULT_VENDOR_ID
-    )
+        if args.command is not None:
+            data = bytes(int(b, 0) for b in args.data.split(",")) if args.data else b""
+            await client.async_send_raw(args.command, data)
+            print(
+                f"Sent raw command 0x{args.command:02x} data={data.hex()}. "
+                "Observe the projector."
+            )
+    finally:
+        await client.stop()
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    sub = parser.add_subparsers(dest="cmd", required=True)
-
-    sub.add_parser(
-        "scan", help="Scan for nearby BLE devices, flagging any advertising the mesh service"
-    ).set_defaults(func=cmd_scan)
-
-    p = sub.add_parser("pair", help="Run the pairing handshake only")
-    _add_common_args(p)
-    p.set_defaults(func=cmd_pair)
-
-    p = sub.add_parser("on", help="Send power-on")
-    _add_common_args(p)
-    p.set_defaults(func=cmd_on)
-
-    p = sub.add_parser("off", help="Send power-off")
-    _add_common_args(p)
-    p.set_defaults(func=cmd_off)
-
-    p = sub.add_parser("color", help="Send an RGB color")
-    _add_common_args(p)
-    p.add_argument("red", type=int)
-    p.add_argument("green", type=int)
-    p.add_argument("blue", type=int)
-    p.set_defaults(func=cmd_color)
-
-    p = sub.add_parser("brightness", help="Send a brightness percentage (0-100)")
-    _add_common_args(p)
-    p.add_argument("percent", type=int)
-    p.set_defaults(func=cmd_brightness)
-
-    p = sub.add_parser("laser", help="Turn the laser on or off")
-    _add_common_args(p)
-    p.add_argument("state", choices=("on", "off"))
-    p.set_defaults(func=cmd_laser)
-
-    p = sub.add_parser("motor", help="Turn the rotation motor on or off")
-    _add_common_args(p)
-    p.add_argument("state", choices=("on", "off"))
-    p.set_defaults(func=cmd_motor)
-
-    p = sub.add_parser(
-        "raw", help="Send a raw opcode + comma-separated data bytes, for protocol experimentation"
+    parser.add_argument(
+        "--scan",
+        action="store_true",
+        help="Scan for nearby BLE devices, flagging any advertising the mesh service",
     )
-    _add_common_args(p)
-    p.add_argument("command", type=lambda s: int(s, 0), help="Opcode, e.g. 0xd0")
-    p.add_argument("data", nargs="?", default="", help="Comma-separated bytes, e.g. 01,00,00")
-    p.set_defaults(func=cmd_raw)
+    parser.add_argument("--address", help="BLE MAC address, e.g. AA:BB:CC:DD:EE:FF")
+    parser.add_argument("--mesh-name", default=DEFAULT_MESH_NAME)
+    parser.add_argument("--mesh-password", default=DEFAULT_MESH_PASSWORD)
+    parser.add_argument(
+        "--vendor-id", type=lambda s: int(s, 0), default=DEFAULT_VENDOR_ID
+    )
+    parser.add_argument(
+        "--pair",
+        action="store_true",
+        help="Just run the pairing handshake (implied by any other flag below)",
+    )
+    parser.add_argument("--power", choices=("on", "off"))
+    parser.add_argument(
+        "--color", type=int, nargs=3, metavar=("RED", "GREEN", "BLUE")
+    )
+    parser.add_argument("--brightness", type=int, metavar="PERCENT")
+    parser.add_argument("--laser", choices=("on", "off"))
+    parser.add_argument("--motor", choices=("on", "off"))
+    parser.add_argument(
+        "--command", type=lambda s: int(s, 0), metavar="OPCODE", help="e.g. 0xf0"
+    )
+    parser.add_argument(
+        "--data", default="", metavar="BYTES", help="Comma-separated bytes, e.g. 65,1,1"
+    )
 
     args = parser.parse_args()
-    asyncio.run(args.func(args))
+    asyncio.run(_run(args))
 
 
 if __name__ == "__main__":

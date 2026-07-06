@@ -262,6 +262,8 @@ class TelinkMeshClient:
 
     async def _send_control_command(self) -> None:
         red, green, blue = self._rgb
+        # Confirmed against the decompiled app: laser/motor use 0x00/0xFF for
+        # off/on (not 0/1 -- that encoding is only used by breathe below).
         await self._send_command(
             CMD_OPCODE,
             bytes(
@@ -270,8 +272,8 @@ class TelinkMeshClient:
                     red,
                     green,
                     blue,
-                    int(self._laser),
-                    int(self._motor),
+                    0xFF if self._laser else 0x00,
+                    0xFF if self._motor else 0x00,
                     self._brightness_level,
                     int(self._breathe),
                 ]

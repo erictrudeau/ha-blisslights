@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from homeassistant.components.light import (
@@ -18,6 +19,13 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import BlissLightsConfigEntry
 from .telink_mesh import TelinkMeshClient
+
+# On power-on, the projector resumes its own default multi-color effect
+# before accepting new commands; a color/brightness command sent immediately
+# after power-on can be overwritten by that resume. Confirmed live: without
+# this delay, turning on with e.g. a solid green ends up showing red+green+
+# blue instead.
+POWER_ON_SETTLE_DELAY = 1.0
 
 
 async def async_setup_entry(
@@ -67,6 +75,8 @@ class BlissLightsEntity(LightEntity):
 
         if not self._attr_is_on:
             await self._client.async_turn_on()
+            if ATTR_RGB_COLOR in kwargs or ATTR_BRIGHTNESS in kwargs:
+                await asyncio.sleep(POWER_ON_SETTLE_DELAY)
         if ATTR_RGB_COLOR in kwargs:
             await self._client.async_set_rgb(self._attr_rgb_color)
         if ATTR_BRIGHTNESS in kwargs:
