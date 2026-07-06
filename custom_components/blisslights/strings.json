@@ -36,11 +36,23 @@
   },
   "entity": {
     "light": {
+      "red": {
+        "name": "Galaxy Red"
+      },
+      "green": {
+        "name": "Galaxy Green"
+      },
+      "blue": {
+        "name": "Galaxy Blue"
+      },
       "laser": {
-        "name": "Laser"
+        "name": "Stars (Laser)"
       }
     },
     "switch": {
+      "power": {
+        "name": "Power"
+      },
       "motor": {
         "name": "Rotation"
       }

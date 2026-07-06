@@ -1,4 +1,4 @@
-"""BlissLights switch platform: rotation-motor control."""
+"""BlissLights switch platform: whole-unit power and rotation-motor control."""
 
 from __future__ import annotations
 
@@ -20,10 +20,52 @@ async def async_setup_entry(
     entry: BlissLightsConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Set up the BlissLights motor switch."""
+    """Set up the BlissLights power and motor switches."""
     client = entry.runtime_data.client
     address = entry.data[CONF_ADDRESS]
-    async_add_entities([BlissLightsMotorSwitch(client, address, entry.title)])
+    async_add_entities(
+        [
+            BlissLightsPowerSwitch(client, address, entry.title),
+            BlissLightsMotorSwitch(client, address, entry.title),
+        ]
+    )
+
+
+class BlissLightsPowerSwitch(SwitchEntity):
+    """Controls whole-unit power.
+
+    The individual Red/Green/Blue/laser lights and the motor switch will
+    power the unit on automatically if it's off when they're used, but this
+    is the only way to turn the whole projector off.
+    """
+
+    _attr_has_entity_name = True
+    _attr_assumed_state = True
+    _attr_should_poll = False
+    _attr_device_class = SwitchDeviceClass.SWITCH
+    _attr_translation_key = "power"
+    _attr_icon = "mdi:power"
+
+    def __init__(self, client: TelinkMeshClient, address: str, name: str) -> None:
+        self._client = client
+        self._attr_unique_id = f"{address}_power"
+        self._attr_device_info = DeviceInfo(
+            name=name,
+            manufacturer="BlissLights",
+            model="Sky Lite 2.0",
+            connections={(dr.CONNECTION_BLUETOOTH, address)},
+        )
+        self._attr_is_on = client.powered_on
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        await self._client.async_turn_on()
+        self._attr_is_on = True
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        await self._client.async_turn_off()
+        self._attr_is_on = False
+        self.async_write_ha_state()
 
 
 class BlissLightsMotorSwitch(SwitchEntity):

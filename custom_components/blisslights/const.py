@@ -47,15 +47,20 @@ CMD_POWER: Final = 0x41
 
 # Sub-command (data[0]) that atomically sets color, laser, motor, brightness,
 # and breathe (fade) mode in one packet -- there is no way to set just one of
-# these fields independently.
+# these fields independently. All commands must resend the last-known value
+# of the fields they aren't changing.
 # Payload: [CMD_CONTROL, R, G, B, laser (0-255), motor (0|0xFF), brightness (1-3), breathe (0|1)]
-# Laser is a continuous PWM dimmer (confirmed live: 32/64/200 are visibly
-# distinct intensities), unlike motor which is a plain on/off flag.
+# R, G, B, and laser are each independent, continuous 0-255 PWM dimmers,
+# confirmed live (e.g. 32/64/200 are visibly distinct intensities on each) --
+# the projector's color LEDs don't blend, they're separate physical
+# elements. Motor is a plain on/off flag, not a dimmer.
 CMD_CONTROL: Final = 0x47
 
-# Brightness is a discrete 3-level dial on this device (low/medium/high), not
-# a continuous 0-100 or 0-255 range -- confirmed via the app's brightness
-# radio buttons, which map directly to these values.
+# A separate, coarser 3-level master dimmer (low/medium/high) alongside the
+# continuous per-channel R/G/B values above -- confirmed via the app's
+# brightness radio buttons, which map directly to these values. Its
+# interaction with the per-channel values (if any) beyond "high" hasn't been
+# tested live, so the integration always sends the max (see telink_mesh.py).
 BRIGHTNESS_LEVELS: Final = (1, 2, 3)
 
 DEVICE_TIMEOUT: Final = 30

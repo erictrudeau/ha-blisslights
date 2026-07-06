@@ -16,7 +16,7 @@ Usage:
     python scripts/ble_probe.py --address AA:BB:CC:DD:EE:FF --power on
     python scripts/ble_probe.py --address AA:BB:CC:DD:EE:FF --power off
     python scripts/ble_probe.py --address AA:BB:CC:DD:EE:FF --color 255 0 0
-    python scripts/ble_probe.py --address AA:BB:CC:DD:EE:FF --brightness 50
+    python scripts/ble_probe.py --address AA:BB:CC:DD:EE:FF --red 128
     python scripts/ble_probe.py --address AA:BB:CC:DD:EE:FF --laser 255
     python scripts/ble_probe.py --address AA:BB:CC:DD:EE:FF --motor off
     python scripts/ble_probe.py --address AA:BB:CC:DD:EE:FF --command 0xf0 --data 65,1,1
@@ -24,7 +24,11 @@ Usage:
 Flags combine into a single connection, e.g. turn on, set color, and
 disable the laser all at once:
     python scripts/ble_probe.py --address AA:BB:CC:DD:EE:FF \\
-        --power on --color 255 0 0 --brightness 100 --laser 0
+        --power on --color 255 0 0 --laser 0
+
+Red/Green/Blue and the laser are each independent continuous 0-255 PWM
+dimmers on this hardware (confirmed live), not a single blended color --
+--red/--green/--blue let you test one channel at a time.
 
 If a command has no visible effect, the opcode/payload/vendor_id are the
 first things to try changing -- pass --vendor-id/--mesh-name/--mesh-password
@@ -133,9 +137,17 @@ async def _run(args: argparse.Namespace) -> None:
             await client.async_set_rgb((red, green, blue))
             print(f"Sent RGB({red}, {green}, {blue}). Did the color change correctly?")
 
-        if args.brightness is not None:
-            await client.async_set_brightness(args.brightness)
-            print(f"Sent brightness {args.brightness}%. Did it dim correctly?")
+        if args.red is not None:
+            await client.async_set_red(args.red)
+            print(f"Sent red={args.red}. Did it dim/brighten correctly?")
+
+        if args.green is not None:
+            await client.async_set_green(args.green)
+            print(f"Sent green={args.green}. Did it dim/brighten correctly?")
+
+        if args.blue is not None:
+            await client.async_set_blue(args.blue)
+            print(f"Sent blue={args.blue}. Did it dim/brighten correctly?")
 
         if args.laser is not None:
             await client.async_set_laser_brightness(args.laser)
@@ -201,7 +213,9 @@ def main() -> None:
     parser.add_argument(
         "--color", type=int, nargs=3, metavar=("RED", "GREEN", "BLUE")
     )
-    parser.add_argument("--brightness", type=int, metavar="PERCENT")
+    parser.add_argument("--red", type=int, metavar="0-255")
+    parser.add_argument("--green", type=int, metavar="0-255")
+    parser.add_argument("--blue", type=int, metavar="0-255")
     parser.add_argument(
         "--laser", type=int, metavar="0-255", help="Laser brightness, 0=off, 255=full"
     )

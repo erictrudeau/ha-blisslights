@@ -1,26 +1,27 @@
 # BlissLights (Home Assistant / HACS)
 
-A Home Assistant custom integration for the **BlissLights Sky Lite 2.0** star projector, controlling power, RGB color, brightness, laser, and rotation motor over BLE.
+A Home Assistant custom integration for the **BlissLights Sky Lite 2.0** star projector, controlling power, its independent Red/Green/Blue/laser channels, and rotation motor over BLE.
 
 There's no official Home Assistant integration for this device, and BlissLights' own companion apps have disappeared from the Play Store. This integration talks to the projector directly using the stock **Telink BLE mesh** protocol its firmware is built on.
 
 ## Status: v0.1, protocol confirmed live
 
-Pairing, power on/off, RGB color, brightness, laser, and rotation motor have all been verified against a real BlissLights Sky Lite 2.0 projector. The command format was reverse-engineered from the official BlissLights Android app's decompiled Telink SDK wrapper (`com.quhwa.mesh`), not just generic Telink/AwoX conventions — this device's firmware ignores the stock Telink opcodes (`0xD0`/`0xE2`/etc.) that many other white-label BLE bulbs respond to. Instead every command uses a single vendor opcode (`0xF0`) with the actual sub-command multiplexed into the first data byte.
+Pairing, power on/off, color channels, laser, and rotation motor have all been verified against a real BlissLights Sky Lite 2.0 projector. The command format was reverse-engineered from the official BlissLights Android app's decompiled Telink SDK wrapper (`com.quhwa.mesh`), not just generic Telink/AwoX conventions — this device's firmware ignores the stock Telink opcodes (`0xD0`/`0xE2`/etc.) that many other white-label BLE bulbs respond to. Instead every command uses a single vendor opcode (`0xF0`) with the actual sub-command multiplexed into the first data byte.
 
-The main light entity exposes power/color/brightness; the laser is a separate dimmable light entity, and rotation motor is a switch entity — both on the same device.
+The projector's Red, Green, Blue, and laser are each their own dimmable light entity (not a single color-picker light), plus a Power switch for the whole unit and a Rotation switch for the motor — all on the same device. Turning on any of the color/laser lights or the motor switch will power the unit on automatically if it was off; the Power switch is the only way to turn the whole thing off.
 
 Notes on the confirmed protocol:
 
-- Brightness is a discrete 3-level dial (low/medium/high) on this hardware, not a smooth 0-255 range. HA's 0-255 brightness slider is quantized down to one of 3 levels.
-- The laser has its own independent brightness control, and unlike the main brightness dial it's a genuine continuous 0-255 PWM dimmer — confirmed live that 32/64/200 all produce visibly distinct intensities, not just 3 discrete steps. Very low values (1-3) don't produce visible light at all, which is a normal dimmer floor rather than a bug.
-- Color, laser, motor, and brightness are all set by a single atomic command — there's no way to change just the color without also specifying laser/motor state. Changing color/brightness from the light entity re-sends whatever laser/motor state was last set.
+- The projector's color LEDs don't blend into one color — setting what would be `(128, 0, 255)` on a normal RGB light lights the red and blue elements individually rather than mixing to purple. This is a hardware characteristic, not a bug, which is why Red/Green/Blue are separate light entities here instead of one color picker.
+- Red, Green, Blue, and the laser are each an independent, continuous 0-255 PWM dimmer — confirmed live that 32/64/200 all produce visibly distinct intensities on each, not just a few discrete steps. Very low values (1-3) don't produce visible light at all, which is a normal dimmer floor rather than a bug.
+- Separately, the device also has a coarser master 3-level brightness dial (low/medium/high, confirmed via the app's brightness radio buttons) alongside the continuous per-channel values above. Its interaction with the per-channel values hasn't been tested beyond "high" live, so the integration always sends the max level and doesn't expose it as a separate control.
+- Color, laser, motor, and the master brightness dial are all set by a single atomic command — there's no way to change just one channel without also resending the others' last-known values, which the integration handles internally.
 - Motor uses `0x00`/`0xFF` for off/on in this command (not `0x00`/`0x01` — that encoding is only used by the separate breathe/fade field). Easy to get backwards; confirmed by testing both directions live.
-- The projector's RGB "color" isn't a single blended LED — setting e.g. `(128, 0, 255)` lights red and blue elements individually rather than mixing to purple. This is a hardware characteristic, not a bug in the integration.
-- On power-on, the projector briefly resumes its own default multi-color effect before accepting new commands. A color/brightness command sent immediately after power-on can get overwritten by that resume; the light entity waits ~1s after powering on before sending color/brightness to avoid this race.
+- On power-on, the projector briefly resumes its own default multi-color effect before accepting new commands. A color command sent immediately after power-on can get overwritten by that resume; the integration waits ~1s after auto-powering on before sending any channel/laser/motor command to avoid this race.
 - The device's BLE advertisement doesn't include the mesh service UUID (that's only visible via GATT service discovery after connecting), so Bluetooth discovery and the manual-add device picker both match on `manufacturer_id` (0x0211/529, confirmed present in every advertisement) instead. A `service_uuid` matcher looks reasonable but silently never fires.
+- The device does send BLE notifications, and `telink_mesh.py`/`ble_probe.py --listen` can genuinely decrypt them (ported from the official app's `com.telink.crypto.AES.decrypt`/`getSecIVS`, confirmed live: the vendor ID and mesh address decode correctly). But investigated live and ruled out as a state source: the payload never varies beyond one counter byte, regardless of what's actually pressed on the device (15+ physical button presses produced only 7 notifications, all with identical content otherwise) -- it's a generic low-level mesh heartbeat, not a power/color/laser/motor status push. The light/switch entities' `assumed_state = True` is correct as-is; there's no cheap way to read real state back from this device.
 
-If pairing fails with a device that previously worked (`Pairing response too short: 0e`), the device's pairing window has likely closed — hold the physical pairing button on the projector and retry.
+If pairing fails with a device that previously worked (`Pairing response too short: 0e`), the device's pairing window has likely closed — hold the projector's power button until its light blinks 6 times, then retry.
 
 ## Installation (HACS custom repository)
 

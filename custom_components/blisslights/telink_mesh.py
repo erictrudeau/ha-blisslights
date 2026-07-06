@@ -51,6 +51,18 @@ BLEAK_BACKOFF_TIME = 0.25
 DEFAULT_ATTEMPTS = 3
 PAIR_RESPONSE_WAIT = 0.3
 
+# On power-on, the projector resumes its own default multi-color effect
+# before accepting new commands; a color/brightness command sent immediately
+# after power-on can be overwritten by that resume. Confirmed live: without
+# this delay, turning on with e.g. a solid green ends up showing red+green+
+# blue instead.
+POWER_ON_SETTLE_DELAY = 1.0
+
+
+def _validate_channel_value(value: int) -> None:
+    if not 0 <= value <= 255:
+        raise ValueError(f"Value {value} is outside the valid range of 0-255")
+
 
 class PairingFailedError(Exception):
     """Raised when the mesh pairing handshake does not complete."""
@@ -232,11 +244,18 @@ class TelinkMeshClient:
         # CMD_CONTROL sets color, laser, motor, brightness, and breathe mode
         # all in a single packet, so we track the last-set value of each and
         # resend the full state whenever one of them changes.
-        self._rgb = (255, 255, 255)
-        self._brightness_level = 3
+        self._red = 255
+        self._green = 255
+        self._blue = 255
+        # The device's master 1-3 brightness dial is a separate, coarser
+        # control from the (confirmed live) continuous per-channel R/G/B
+        # dimming -- fixed at max here since per-channel values already give
+        # real continuous control; see BRIGHTNESS_LEVELS in const.py.
+        self._brightness_level = BRIGHTNESS_LEVELS[-1]
         self._laser_brightness = 255
         self._motor = True
         self._breathe = False
+        self._powered_on = False
 
         self._connect_lock = asyncio.Lock()
         self._operation_lock = asyncio.Lock()
@@ -261,48 +280,66 @@ class TelinkMeshClient:
 
     async def async_turn_on(self) -> None:
         await self._send_command(CMD_OPCODE, bytes([CMD_POWER, 0x01, 0x01]))
+        self._powered_on = True
 
     async def async_turn_off(self) -> None:
         await self._send_command(CMD_OPCODE, bytes([CMD_POWER, 0x00, 0x01]))
+        self._powered_on = False
 
-    async def async_set_rgb(self, rgb: tuple[int, int, int]) -> None:
-        red, green, blue = rgb
-        for value in (red, green, blue):
-            if not 0 <= value <= 255:
-                raise ValueError(f"Value {value} is outside the valid range of 0-255")
-        self._rgb = (red, green, blue)
+    @property
+    def powered_on(self) -> bool:
+        return self._powered_on
+
+    async def async_set_red(self, value: int) -> None:
+        _validate_channel_value(value)
+        self._red = value
         await self._send_control_command()
 
-    async def async_set_brightness(self, brightness_pct: int) -> None:
-        """Set brightness as a 0-100 percentage.
+    async def async_set_green(self, value: int) -> None:
+        _validate_channel_value(value)
+        self._green = value
+        await self._send_control_command()
 
-        The device only supports 3 discrete brightness levels (low/medium/
-        high), so this is quantized to the nearest of those.
-        """
-        if not 0 <= brightness_pct <= 100:
-            raise ValueError(
-                f"Value {brightness_pct} is outside the valid range of 0-100"
-            )
-        index = min(brightness_pct * 3 // 100, 2)
-        self._brightness_level = BRIGHTNESS_LEVELS[index]
+    async def async_set_blue(self, value: int) -> None:
+        _validate_channel_value(value)
+        self._blue = value
+        await self._send_control_command()
+
+    async def async_set_rgb(self, rgb: tuple[int, int, int]) -> None:
+        """Set all three channels in one command. Mainly for ble_probe.py."""
+        red, green, blue = rgb
+        for value in (red, green, blue):
+            _validate_channel_value(value)
+        self._red, self._green, self._blue = red, green, blue
         await self._send_control_command()
 
     async def async_set_laser_brightness(self, brightness: int) -> None:
         """Set the laser's brightness (0 = off, 255 = full), a real PWM dimmer.
 
-        Confirmed live: unlike the RGB brightness field, this is a continuous
-        dial, not a 3-level enum -- e.g. 32/64/200 all produced visibly
-        different intensities. Very low values (1-3) don't produce visible
-        light at all, matching a normal dimmer floor.
+        Confirmed live: unlike the master RGB brightness dial, this is a
+        continuous dial, not a 3-level enum -- e.g. 32/64/200 all produced
+        visibly different intensities. Very low values (1-3) don't produce
+        visible light at all, matching a normal dimmer floor.
         """
-        if not 0 <= brightness <= 255:
-            raise ValueError(f"Value {brightness} is outside the valid range of 0-255")
+        _validate_channel_value(brightness)
         self._laser_brightness = brightness
         await self._send_control_command()
 
     async def async_set_motor(self, enabled: bool) -> None:
         self._motor = enabled
         await self._send_control_command()
+
+    @property
+    def red(self) -> int:
+        return self._red
+
+    @property
+    def green(self) -> int:
+        return self._green
+
+    @property
+    def blue(self) -> int:
+        return self._blue
 
     @property
     def laser_brightness(self) -> int:
@@ -316,19 +353,29 @@ class TelinkMeshClient:
     def motor_enabled(self) -> bool:
         return self._motor
 
+    async def _ensure_powered_on(self) -> None:
+        """Turn the unit on first if needed, e.g. from a channel/laser/motor
+        entity being toggled while the device is off -- mirrors what the
+        official app does before its own color/brightness commands.
+        """
+        if not self._powered_on:
+            await self.async_turn_on()
+            await asyncio.sleep(POWER_ON_SETTLE_DELAY)
+
     async def _send_control_command(self) -> None:
-        red, green, blue = self._rgb
+        await self._ensure_powered_on()
         # Confirmed against the decompiled app: motor uses 0x00/0xFF for
         # off/on (not 0/1 -- that encoding is only used by breathe below).
-        # Laser is its own continuous 0-255 dimmer, confirmed live.
+        # R/G/B and laser are each independent continuous 0-255 dimmers,
+        # confirmed live -- this isn't a single blended color.
         await self._send_command(
             CMD_OPCODE,
             bytes(
                 [
                     CMD_CONTROL,
-                    red,
-                    green,
-                    blue,
+                    self._red,
+                    self._green,
+                    self._blue,
                     self._laser_brightness,
                     0xFF if self._motor else 0x00,
                     self._brightness_level,
