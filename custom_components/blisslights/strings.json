@@ -1,0 +1,47 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to a BlissLights projector",
+        "description": "Select a discovered device, or enter its Bluetooth MAC address if it wasn't found automatically.",
+        "data": {
+          "address": "Bluetooth address"
+        }
+      },
+      "credentials": {
+        "title": "Mesh credentials",
+        "description": "Enter the Telink mesh name/password for {address}. Leave the defaults unless you know the app was paired with custom values.",
+        "data": {
+          "mesh_name": "Mesh name",
+          "mesh_password": "Mesh password",
+          "vendor_id": "Vendor ID (hex or decimal)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect to the device. Make sure it's powered on and in range.",
+      "pairing_failed": "Connected, but the pairing handshake failed. Double-check the mesh name/password.",
+      "invalid_vendor_id": "Vendor ID must be a number, e.g. 0x0211 or 529.",
+      "unknown": "Unexpected error."
+    },
+    "abort": {
+      "already_configured": "This device is already configured.",
+      "no_devices_found": "No BlissLights devices were found."
+    }
+  },
+  "exceptions": {
+    "device_not_found": {
+      "message": "Could not find {address}. {reason}"
+    }
+  },
+  "entity": {
+    "switch": {
+      "laser": {
+        "name": "Laser"
+      },
+      "motor": {
+        "name": "Rotation motor"
+      }
+    }
+  }
+}

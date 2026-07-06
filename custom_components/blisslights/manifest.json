@@ -1,0 +1,19 @@
+{
+  "domain": "blisslights",
+  "name": "BlissLights",
+  "bluetooth": [
+    {
+      "service_uuid": "00010203-0405-0607-0809-0a0b0c0d1910",
+      "connectable": true
+    }
+  ],
+  "codeowners": [],
+  "config_flow": true,
+  "dependencies": ["bluetooth_adapters"],
+  "documentation": "https://github.com/frosteddark/blisslights",
+  "integration_type": "device",
+  "iot_class": "assumed_state",
+  "issue_tracker": "https://github.com/frosteddark/blisslights/issues",
+  "requirements": ["bleak-retry-connector>=3.0.0", "pycryptodome>=3.19.0"],
+  "version": "0.1.0"
+}
