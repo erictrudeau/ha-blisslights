@@ -59,7 +59,7 @@ class BlissLightsEntity(LightEntity):
         self._attr_device_info = DeviceInfo(
             name=name,
             manufacturer="BlissLights",
-            model="2.0 Bluetooth Star Projector",
+            model="Sky Lite 2.0",
             connections={(dr.CONNECTION_BLUETOOTH, address)},
         )
         self._attr_is_on = False

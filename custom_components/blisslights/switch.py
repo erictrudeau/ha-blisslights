@@ -51,13 +51,13 @@ class _BlissLightsSwitch(SwitchEntity):
         self._attr_device_info = DeviceInfo(
             name=name,
             manufacturer="BlissLights",
-            model="2.0 Bluetooth Star Projector",
+            model="Sky Lite 2.0",
             connections={(dr.CONNECTION_BLUETOOTH, address)},
         )
 
 
 class BlissLightsLaserSwitch(_BlissLightsSwitch):
-    """Controls the projector's green laser."""
+    """Controls the projector's blue laser."""
 
     _attr_translation_key = "laser"
 

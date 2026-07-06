@@ -1,12 +1,12 @@
 # BlissLights (Home Assistant / HACS)
 
-A Home Assistant custom integration for the **BlissLights 2.0 Bluetooth Star Projector**, controlling power, RGB color, brightness, laser, and rotation motor over BLE.
+A Home Assistant custom integration for the **BlissLights Sky Lite 2.0** star projector, controlling power, RGB color, brightness, laser, and rotation motor over BLE.
 
 There's no official Home Assistant integration for this device, and BlissLights' own companion apps have disappeared from the Play Store. This integration talks to the projector directly using the stock **Telink BLE mesh** protocol its firmware is built on.
 
 ## Status: v0.1, protocol confirmed live
 
-Pairing, power on/off, RGB color, brightness, laser, and rotation motor have all been verified against a real BlissLights 2.0 projector. The command format was reverse-engineered from the official BlissLights Android app's decompiled Telink SDK wrapper (`com.quhwa.mesh`), not just generic Telink/AwoX conventions — this device's firmware ignores the stock Telink opcodes (`0xD0`/`0xE2`/etc.) that many other white-label BLE bulbs respond to. Instead every command uses a single vendor opcode (`0xF0`) with the actual sub-command multiplexed into the first data byte.
+Pairing, power on/off, RGB color, brightness, laser, and rotation motor have all been verified against a real BlissLights Sky Lite 2.0 projector. The command format was reverse-engineered from the official BlissLights Android app's decompiled Telink SDK wrapper (`com.quhwa.mesh`), not just generic Telink/AwoX conventions — this device's firmware ignores the stock Telink opcodes (`0xD0`/`0xE2`/etc.) that many other white-label BLE bulbs respond to. Instead every command uses a single vendor opcode (`0xF0`) with the actual sub-command multiplexed into the first data byte.
 
 The light entity exposes power/color/brightness; laser and rotation motor are separate switch entities on the same device.
 
