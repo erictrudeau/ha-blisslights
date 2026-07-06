@@ -17,14 +17,14 @@ Usage:
     python scripts/ble_probe.py --address AA:BB:CC:DD:EE:FF --power off
     python scripts/ble_probe.py --address AA:BB:CC:DD:EE:FF --color 255 0 0
     python scripts/ble_probe.py --address AA:BB:CC:DD:EE:FF --brightness 50
-    python scripts/ble_probe.py --address AA:BB:CC:DD:EE:FF --laser on
+    python scripts/ble_probe.py --address AA:BB:CC:DD:EE:FF --laser 255
     python scripts/ble_probe.py --address AA:BB:CC:DD:EE:FF --motor off
     python scripts/ble_probe.py --address AA:BB:CC:DD:EE:FF --command 0xf0 --data 65,1,1
 
 Flags combine into a single connection, e.g. turn on, set color, and
 disable the laser all at once:
     python scripts/ble_probe.py --address AA:BB:CC:DD:EE:FF \\
-        --power on --color 255 0 0 --brightness 100 --laser off
+        --power on --color 255 0 0 --brightness 100 --laser 0
 
 If a command has no visible effect, the opcode/payload/vendor_id are the
 first things to try changing -- pass --vendor-id/--mesh-name/--mesh-password
@@ -40,6 +40,7 @@ import importlib.util
 import sys
 import types
 from pathlib import Path
+from typing import Any
 
 from bleak import BleakScanner
 
@@ -137,8 +138,8 @@ async def _run(args: argparse.Namespace) -> None:
             print(f"Sent brightness {args.brightness}%. Did it dim correctly?")
 
         if args.laser is not None:
-            await client.async_set_laser(args.laser == "on")
-            print(f"Sent laser {args.laser}. Did the laser respond correctly?")
+            await client.async_set_laser_brightness(args.laser)
+            print(f"Sent laser brightness {args.laser}. Did the laser respond correctly?")
 
         if args.motor is not None:
             await client.async_set_motor(args.motor == "on")
@@ -151,6 +152,27 @@ async def _run(args: argparse.Namespace) -> None:
                 f"Sent raw command 0x{args.command:02x} data={data.hex()}. "
                 "Observe the projector."
             )
+
+        if args.listen is not None:
+            def _on_notify(_characteristic: Any, data: bytearray) -> None:
+                raw = bytes(data)
+                line = f"  notify: raw={raw.hex()}"
+                decrypted = client.decrypt_notification(raw)
+                if decrypted is not None:
+                    line += f"  decrypted={decrypted.hex()}"
+                else:
+                    line += "  (MAC did not verify)"
+                print(line)
+
+            print(
+                f"Subscribed to the notify characteristic, listening for "
+                f"{args.listen}s -- press buttons / change settings on the "
+                "device or its app now."
+            )
+            await client.async_start_notify(_on_notify)
+            await asyncio.sleep(args.listen)
+            await client.async_stop_notify()
+            print("Done listening.")
     finally:
         await client.stop()
 
@@ -180,13 +202,21 @@ def main() -> None:
         "--color", type=int, nargs=3, metavar=("RED", "GREEN", "BLUE")
     )
     parser.add_argument("--brightness", type=int, metavar="PERCENT")
-    parser.add_argument("--laser", choices=("on", "off"))
+    parser.add_argument(
+        "--laser", type=int, metavar="0-255", help="Laser brightness, 0=off, 255=full"
+    )
     parser.add_argument("--motor", choices=("on", "off"))
     parser.add_argument(
         "--command", type=lambda s: int(s, 0), metavar="OPCODE", help="e.g. 0xf0"
     )
     parser.add_argument(
         "--data", default="", metavar="BYTES", help="Comma-separated bytes, e.g. 65,1,1"
+    )
+    parser.add_argument(
+        "--listen",
+        type=float,
+        metavar="SECONDS",
+        help="Subscribe to the notify characteristic and print raw notifications",
     )
 
     args = parser.parse_args()

@@ -4,6 +4,8 @@ from typing import Final
 
 DOMAIN: Final = "blisslights"
 
+DEFAULT_DEVICE_NAME: Final = "Galaxy Projector"
+
 # Standard Telink mesh SDK GATT service/characteristics. BlissLights 2.0 uses
 # the stock Telink demo UUIDs (confirmed via UART/APK teardown, see
 # https://community.home-assistant.io/t/reverse-engineering-blisslights-2-0-bluetooth-star-projector/387349),
@@ -46,7 +48,9 @@ CMD_POWER: Final = 0x41
 # Sub-command (data[0]) that atomically sets color, laser, motor, brightness,
 # and breathe (fade) mode in one packet -- there is no way to set just one of
 # these fields independently.
-# Payload: [CMD_CONTROL, R, G, B, laser (0|1), motor (0|1), brightness (1-3), breathe (0|1)]
+# Payload: [CMD_CONTROL, R, G, B, laser (0-255), motor (0|0xFF), brightness (1-3), breathe (0|1)]
+# Laser is a continuous PWM dimmer (confirmed live: 32/64/200 are visibly
+# distinct intensities), unlike motor which is a plain on/off flag.
 CMD_CONTROL: Final = 0x47
 
 # Brightness is a discrete 3-level dial on this device (low/medium/high), not

@@ -3,7 +3,7 @@
   "name": "BlissLights",
   "bluetooth": [
     {
-      "service_uuid": "00010203-0405-0607-0809-0a0b0c0d1910",
+      "manufacturer_id": 529,
       "connectable": true
     }
   ],

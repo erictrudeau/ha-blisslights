@@ -10,7 +10,7 @@
       },
       "credentials": {
         "title": "Mesh credentials",
-        "description": "Enter the Telink mesh name/password for {address}. Leave the defaults unless you know the app was paired with custom values.",
+        "description": "The factory-default mesh credentials didn't work for {address} -- this usually means the device was re-paired with custom values via the official app's QR-share feature. Enter those custom values here.",
         "data": {
           "mesh_name": "Mesh name",
           "mesh_password": "Mesh password",
@@ -35,12 +35,14 @@
     }
   },
   "entity": {
-    "switch": {
+    "light": {
       "laser": {
         "name": "Laser"
-      },
+      }
+    },
+    "switch": {
       "motor": {
-        "name": "Rotation motor"
+        "name": "Rotation"
       }
     }
   }

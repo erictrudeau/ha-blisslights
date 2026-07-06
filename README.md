@@ -8,15 +8,17 @@ There's no official Home Assistant integration for this device, and BlissLights'
 
 Pairing, power on/off, RGB color, brightness, laser, and rotation motor have all been verified against a real BlissLights Sky Lite 2.0 projector. The command format was reverse-engineered from the official BlissLights Android app's decompiled Telink SDK wrapper (`com.quhwa.mesh`), not just generic Telink/AwoX conventions — this device's firmware ignores the stock Telink opcodes (`0xD0`/`0xE2`/etc.) that many other white-label BLE bulbs respond to. Instead every command uses a single vendor opcode (`0xF0`) with the actual sub-command multiplexed into the first data byte.
 
-The light entity exposes power/color/brightness; laser and rotation motor are separate switch entities on the same device.
+The main light entity exposes power/color/brightness; the laser is a separate dimmable light entity, and rotation motor is a switch entity — both on the same device.
 
 Notes on the confirmed protocol:
 
 - Brightness is a discrete 3-level dial (low/medium/high) on this hardware, not a smooth 0-255 range. HA's 0-255 brightness slider is quantized down to one of 3 levels.
-- Color, laser, motor, and brightness are all set by a single atomic command — there's no way to change just the color without also specifying laser/motor state. Changing color/brightness from the light entity re-sends whatever laser/motor state the switches were last set to.
-- Laser and motor use `0x00`/`0xFF` for off/on in this command (not `0x00`/`0x01` — that encoding is only used by the separate breathe/fade field). Easy to get backwards; confirmed by testing both directions live.
+- The laser has its own independent brightness control, and unlike the main brightness dial it's a genuine continuous 0-255 PWM dimmer — confirmed live that 32/64/200 all produce visibly distinct intensities, not just 3 discrete steps. Very low values (1-3) don't produce visible light at all, which is a normal dimmer floor rather than a bug.
+- Color, laser, motor, and brightness are all set by a single atomic command — there's no way to change just the color without also specifying laser/motor state. Changing color/brightness from the light entity re-sends whatever laser/motor state was last set.
+- Motor uses `0x00`/`0xFF` for off/on in this command (not `0x00`/`0x01` — that encoding is only used by the separate breathe/fade field). Easy to get backwards; confirmed by testing both directions live.
 - The projector's RGB "color" isn't a single blended LED — setting e.g. `(128, 0, 255)` lights red and blue elements individually rather than mixing to purple. This is a hardware characteristic, not a bug in the integration.
 - On power-on, the projector briefly resumes its own default multi-color effect before accepting new commands. A color/brightness command sent immediately after power-on can get overwritten by that resume; the light entity waits ~1s after powering on before sending color/brightness to avoid this race.
+- The device's BLE advertisement doesn't include the mesh service UUID (that's only visible via GATT service discovery after connecting), so Bluetooth discovery and the manual-add device picker both match on `manufacturer_id` (0x0211/529, confirmed present in every advertisement) instead. A `service_uuid` matcher looks reasonable but silently never fires.
 
 If pairing fails with a device that previously worked (`Pairing response too short: 0e`), the device's pairing window has likely closed — hold the physical pairing button on the projector and retry.
 

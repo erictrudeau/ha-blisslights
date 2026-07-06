@@ -33,9 +33,15 @@ async def async_setup_entry(
     entry: BlissLightsConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Set up the BlissLights light."""
+    """Set up the BlissLights lights."""
     client = entry.runtime_data.client
-    async_add_entities([BlissLightsEntity(client, entry.data[CONF_ADDRESS], entry.title)])
+    address = entry.data[CONF_ADDRESS]
+    async_add_entities(
+        [
+            BlissLightsEntity(client, address, entry.title),
+            BlissLightsLaserLight(client, address, entry.title),
+        ]
+    )
 
 
 class BlissLightsEntity(LightEntity):
@@ -50,6 +56,7 @@ class BlissLightsEntity(LightEntity):
     _attr_name = None
     _attr_assumed_state = True
     _attr_should_poll = False
+    _attr_icon = "mdi:weather-night"
     _attr_supported_color_modes = {ColorMode.RGB}
     _attr_color_mode = ColorMode.RGB
 
@@ -90,5 +97,46 @@ class BlissLightsEntity(LightEntity):
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off."""
         await self._client.async_turn_off()
+        self._attr_is_on = False
+        self.async_write_ha_state()
+
+
+class BlissLightsLaserLight(LightEntity):
+    """The projector's blue laser, a dimmable light (not just on/off).
+
+    Confirmed live: the laser has its own continuous 0-255 PWM brightness,
+    independent of the RGB brightness dial -- e.g. 32/64/200 produced
+    visibly different intensities. State is optimistic, like the main light.
+    """
+
+    _attr_has_entity_name = True
+    _attr_assumed_state = True
+    _attr_should_poll = False
+    _attr_icon = "mdi:creation"
+    _attr_translation_key = "laser"
+    _attr_supported_color_modes = {ColorMode.BRIGHTNESS}
+    _attr_color_mode = ColorMode.BRIGHTNESS
+
+    def __init__(self, client: TelinkMeshClient, address: str, name: str) -> None:
+        self._client = client
+        self._attr_unique_id = f"{address}_laser"
+        self._attr_device_info = DeviceInfo(
+            name=name,
+            manufacturer="BlissLights",
+            model="Sky Lite 2.0",
+            connections={(dr.CONNECTION_BLUETOOTH, address)},
+        )
+        self._attr_is_on = client.laser_enabled
+        self._attr_brightness = client.laser_brightness
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        brightness = kwargs.get(ATTR_BRIGHTNESS, self._attr_brightness or 255)
+        await self._client.async_set_laser_brightness(brightness)
+        self._attr_is_on = True
+        self._attr_brightness = brightness
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        await self._client.async_set_laser_brightness(0)
         self._attr_is_on = False
         self.async_write_ha_state()

@@ -37,6 +37,7 @@ from Crypto.Cipher import AES
 from .const import (
     BRIGHTNESS_LEVELS,
     CHAR_COMMAND,
+    CHAR_NOTIFY,
     CHAR_PAIR,
     CMD_CONTROL,
     CMD_OPCODE,
@@ -156,6 +157,48 @@ def encrypt_packet(
     return packet
 
 
+def decrypt_notify_packet(
+    session_key: bytes, mac_reversed: bytes, raw: bytes
+) -> bytes | None:
+    """Decrypt a device-originated notify packet, per the official Telink SDK.
+
+    Ported from com.telink.crypto.AES.decrypt(key, iv, packet) and
+    LightController.onNotify() in the decompiled BlissLights app. This is
+    NOT symmetric with encrypt_packet: notify packets use a different byte
+    layout (MAC at bytes[5:7], encrypted payload at bytes[7:20], vs.
+    outgoing packets' MAC at [3:5] / payload at [5:20]), and the IV borrows
+    the packet's own first 5 bytes instead of our local sequence counter
+    (getSecIVS: mac_reversed[0:3] + raw[0:5]), since the device has no
+    knowledge of our app-side sequence number.
+
+    Returns the 13-byte decrypted payload, or None if the MAC doesn't
+    verify (wrong session key, or not actually a notify-shaped packet).
+    """
+    if len(raw) < 20:
+        return None
+    iv8 = mac_reversed[0:3] + raw[0:5]
+    packet = bytearray(raw)
+
+    pad_block = bytearray(16)
+    pad_block[1:9] = iv8
+    pad = _aes_ecb_reversed(session_key, bytes(pad_block))
+    for i in range(13):
+        packet[7 + i] ^= pad[i]
+
+    mac_block = bytearray(16)
+    mac_block[0:8] = iv8
+    mac_block[8] = 13
+    mac = bytearray(_aes_ecb_reversed(session_key, bytes(mac_block)))
+    for i in range(13):
+        mac[i] ^= packet[7 + i]
+        if i == 12:
+            mac = bytearray(_aes_ecb_reversed(session_key, bytes(mac)))
+
+    if packet[5] != mac[0] or packet[6] != mac[1]:
+        return None
+    return bytes(packet[7:20])
+
+
 def mac_reversed_from_address(address: str) -> bytes:
     """Convert an "AA:BB:CC:DD:EE:FF" address into Telink's reversed byte order."""
     raw = bytes.fromhex(address.replace(":", "").replace("-", ""))
@@ -191,7 +234,7 @@ class TelinkMeshClient:
         # resend the full state whenever one of them changes.
         self._rgb = (255, 255, 255)
         self._brightness_level = 3
-        self._laser = True
+        self._laser_brightness = 255
         self._motor = True
         self._breathe = False
 
@@ -244,8 +287,17 @@ class TelinkMeshClient:
         self._brightness_level = BRIGHTNESS_LEVELS[index]
         await self._send_control_command()
 
-    async def async_set_laser(self, enabled: bool) -> None:
-        self._laser = enabled
+    async def async_set_laser_brightness(self, brightness: int) -> None:
+        """Set the laser's brightness (0 = off, 255 = full), a real PWM dimmer.
+
+        Confirmed live: unlike the RGB brightness field, this is a continuous
+        dial, not a 3-level enum -- e.g. 32/64/200 all produced visibly
+        different intensities. Very low values (1-3) don't produce visible
+        light at all, matching a normal dimmer floor.
+        """
+        if not 0 <= brightness <= 255:
+            raise ValueError(f"Value {brightness} is outside the valid range of 0-255")
+        self._laser_brightness = brightness
         await self._send_control_command()
 
     async def async_set_motor(self, enabled: bool) -> None:
@@ -253,8 +305,12 @@ class TelinkMeshClient:
         await self._send_control_command()
 
     @property
+    def laser_brightness(self) -> int:
+        return self._laser_brightness
+
+    @property
     def laser_enabled(self) -> bool:
-        return self._laser
+        return self._laser_brightness > 0
 
     @property
     def motor_enabled(self) -> bool:
@@ -262,8 +318,9 @@ class TelinkMeshClient:
 
     async def _send_control_command(self) -> None:
         red, green, blue = self._rgb
-        # Confirmed against the decompiled app: laser/motor use 0x00/0xFF for
+        # Confirmed against the decompiled app: motor uses 0x00/0xFF for
         # off/on (not 0/1 -- that encoding is only used by breathe below).
+        # Laser is its own continuous 0-255 dimmer, confirmed live.
         await self._send_command(
             CMD_OPCODE,
             bytes(
@@ -272,7 +329,7 @@ class TelinkMeshClient:
                     red,
                     green,
                     blue,
-                    0xFF if self._laser else 0x00,
+                    self._laser_brightness,
                     0xFF if self._motor else 0x00,
                     self._brightness_level,
                     int(self._breathe),
@@ -287,6 +344,26 @@ class TelinkMeshClient:
     async def async_send_raw(self, command: int, data: bytes, target: int = 0) -> None:
         """Send an arbitrary opcode/payload. For protocol experimentation only."""
         await self._send_command(command, data, target)
+
+    async def async_start_notify(self, callback: Any) -> None:
+        """Subscribe to the notify characteristic. For protocol experimentation only.
+
+        callback is invoked as callback(characteristic, data: bytearray) per
+        bleak's start_notify convention. Raw and undecoded -- there's no
+        confirmed notification format for this device yet.
+        """
+        await self._ensure_connected()
+        assert self._client is not None  # noqa: S101
+        await self._client.start_notify(CHAR_NOTIFY, callback)
+
+    async def async_stop_notify(self) -> None:
+        if self._client is not None and self._client.is_connected:
+            await self._client.stop_notify(CHAR_NOTIFY)
+
+    def decrypt_notification(self, raw: bytes) -> bytes | None:
+        """Decrypt a raw notify payload, or None if its MAC doesn't verify."""
+        assert self._session_key is not None  # noqa: S101
+        return decrypt_notify_packet(self._session_key, self._mac_reversed, raw)
 
     async def stop(self) -> None:
         """Disconnect and cancel any pending idle-disconnect timer."""
@@ -305,7 +382,22 @@ class TelinkMeshClient:
             if self._client and self._client.is_connected:
                 self._reset_disconnect_timer()
                 return
-            _LOGGER.debug("%s: Connecting", self.name)
+            self._client = await self._connect_and_pair()
+            self._reset_disconnect_timer()
+
+    async def _connect_and_pair(self) -> BleakClientWithServiceCache:
+        """Connect and run the pairing handshake, retrying on rejection.
+
+        The device intermittently rejects the pairing handshake on an
+        otherwise-healthy connection with correct credentials (observed
+        live, not just on credential mismatch); a same-connection retry of
+        just the handshake doesn't help, but reconnecting from scratch
+        usually does. This is unrelated to the device's physical pairing
+        button, which only gates accepting a *new* mesh key.
+        """
+        last_error: PairingFailedError | None = None
+        for attempt in range(DEFAULT_ATTEMPTS):
+            _LOGGER.debug("%s: Connecting (attempt %d)", self.name, attempt + 1)
             client = await establish_connection(
                 BleakClientWithServiceCache,
                 self._ble_device,
@@ -317,11 +409,19 @@ class TelinkMeshClient:
             _LOGGER.debug("%s: Connected, pairing", self.name)
             try:
                 self._session_key = await self._pair(client)
+            except PairingFailedError as ex:
+                last_error = ex
+                await client.disconnect()
+                if attempt < DEFAULT_ATTEMPTS - 1:
+                    await asyncio.sleep(BLEAK_BACKOFF_TIME)
+                continue
             except Exception:
                 await client.disconnect()
                 raise
-            self._client = client
-            self._reset_disconnect_timer()
+            else:
+                return client
+        assert last_error is not None  # noqa: S101
+        raise last_error
 
     async def _pair(self, client: BleakClientWithServiceCache) -> bytes:
         """Run the mesh challenge/response handshake and derive a session key."""
